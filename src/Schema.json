@@ -105,8 +105,8 @@
         "description": "Forwarding institution. country code"
     },
     "22": {
-        "type": "an",
-        "length": "4",
+        "type": "n",
+        "length": "3",
         "description": "Point of service entry mode"
     },
     "23": {
@@ -196,12 +196,12 @@
     },
     "43": {
         "type": "ans",
-        "length": "40",
+        "length": "..40",
         "description": "Card acceptor name\/location (1-23 address 24-36 city 37-38 state 39-40 country)"
     },
     "44": {
-        "type": "an",
-        "length": "..25",
+        "type": "ans",
+        "length": "..999",
         "description": "Additional response data"
     },
     "45": {
@@ -225,7 +225,7 @@
         "description": "Additional data - private"
     },
     "49": {
-        "type": "a",
+        "type": "n",
         "length": "3",
         "description": "Currency code, transaction"
     },
@@ -267,7 +267,7 @@
     "57": {
         "type": "ans",
         "length": "...999",
-        "description": "Reserved national"
+        "description": "Sequence-generation-number"
     },
     "58": {
         "type": "ans",
@@ -277,12 +277,12 @@
     "59": {
         "type": "ans",
         "length": "...999",
-        "description": "Reserved national"
+        "description": "Authorization identifier (AID)"
     },
     "60": {
-        "type": "n",
-        "length": "..10",
-        "description": "Reserved national"
+        "type": "ans",
+        "length": "...999",
+        "description": "Additional Data"
     },
     "61": {
         "type": "ans",
@@ -295,9 +295,9 @@
         "description": "Reserved private"
     },
     "63": {
-        "type": "ans",
-        "length": "...999",
-        "description": "Reserved private"
+        "type": "n",
+        "length": "6",
+        "description": "GICC message format version number"
     },
     "64": {
         "type": "b",

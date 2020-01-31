@@ -3,8 +3,9 @@ namespace ISO8583;
 
 use ISO8583\Error\UnpackError;
 use ISO8583\Error\PackError;
+use ISO8583\Mapper\AlphaNumeric;
 
-class Message 
+class Message
 {
 	protected $protocol;
 	protected $options;
@@ -35,7 +36,7 @@ class Message
 		$this->protocol = $protocol;
 	}
 
-	protected function shrink(&$message, $length) 
+	protected function shrink(&$message, $length)
 	{
 		$message = substr($message, $length);
 	}
@@ -43,18 +44,18 @@ class Message
 	public function pack()
 	{
 		// Setting MTI
-		$mti = bin2hex($this->mti);
-		
+		$mti = $this->mti;
+
 		// Dropping bad fields
 		foreach($this->fields as $key=>$val) {
 			if (in_array($key, [1, 65])) {
 				unset($this->fields[$key]);
 			}
 		}
-		
+
 		// Populating bitmap
 		$bitmap = "";
-		$bitmapLength = 64 * (floor(max(array_keys($this->fields)) / 64) + 1);
+		$bitmapLength = 64 * (int)(floor(max(array_keys($this->fields)) / 64) + 1);
 
 		$tmpBitmap = "";
 		for($i=1; $i <= $bitmapLength; $i++) {
@@ -75,6 +76,8 @@ class Message
 			}
 		}
 
+		$this->bitmap = $bitmap;
+
 		// Getting field IDS
 		ksort($this->fields);
 
@@ -87,59 +90,69 @@ class Message
 			if (!isset($this->mappers[$fieldMapper])) {
 				throw new \Exception('Unknown field mapper for "' . $fieldMapper . '" type');
 			}
-			
+
 			$mapper = new $this->mappers[$fieldMapper]($fieldData['length']);
 
-			if (
+            echo $id . " " . json_encode(($fieldData)) . ' ' . get_class($mapper) . PHP_EOL;
+
+
+            if (
 				($mapper->getLength() > strlen($data) && $mapper->getVariableLength() === 0 ) ||
 				$mapper->getLength() < strlen($data)
 			) {
 				$error = 'FIELD [' . $id . '] should have length: ' . $mapper->getLength() . ' and your message "' . $data . "' is " . strlen($data);
 				throw new Error\PackError($error);
-			}			
+			}
 
-			$message .= $mapper->pack($data);		
+
+
+			$pack =  $mapper->pack($data, $fieldData['type']);
+
+            $message .= $pack;
+
+            echo "*** LENGTH: " . strlen($message) . " ADDED " . $pack . PHP_EOL;
+
+            echo $message . PHP_EOL;
 		}
 
 		// Packing all message
 		$message = $mti . $bitmap . $message;
-		if ($this->options['lengthPrefix'] > 0) {
-			$message = bin2hex(sprintf('%0' . $this->options['lengthPrefix'] . 'd', strlen($message) / 2)) . $message;
-		}
+//		if ($this->options['lengthPrefix'] > 0) {
+//			$length = strlen($message);
+//			$header = $this->asciiToEbcdic()
+//			$message = $header . $message;
+//		}
 
 		return $message;
 	}
 
 	public function unpack($message)
 	{
+	    $message = strtoupper($message);
 		// Getting message length if we have one
 		if ($this->options['lengthPrefix'] > 0) {
-			$length = (int)hex2bin(substr($message, 0, (int)$this->options['lengthPrefix'] * 2));
+		    $lengthHex = substr($message, 0, (int)$this->options['lengthPrefix'] * 2);
+			$length = hexdec($lengthHex);
+
+            if (strlen($message) != $length * 2) {
+                throw new UnpackError('Message length is ' . strlen($message) / 2 . ' and should be ' . $length);
+            }
+
 			$this->shrink($message, (int)$this->options['lengthPrefix'] * 2);
-
-			if (strlen($message) != $length * 2) {
-				throw new UnpackError('Message length is ' . strlen($message) / 2 . ' and should be ' . $length);
-			}
 		}
 
-		// Parsing MTI 
-		$this->setMTI(hex2bin(substr($message, 0, 8)));
-		$this->shrink($message, 8);
+		// Parsing MTI
+		$this->setMTI(substr($message, 0, 4));
+		$this->shrink($message, 4);
 
-		// Parsing bitmap
-		$bitmap = "";
-		for(;;) {
-			$tmp = implode(null, array_map(function($bit) {
-				return str_pad(base_convert($bit, 16, 2), 8, 0, STR_PAD_LEFT);
-			}, str_split(substr($message, 0, 16), 2)));
+		$bitmapHex = substr($message, 0,16);
+		$bitmap = base_convert($bitmapHex, 16, 2);
+		$bitmap = str_pad($bitmap, 64, '0', STR_PAD_LEFT);
 
-			$this->shrink($message, 16);
-			$bitmap .= $tmp;
+		echo "bitmap hex: $bitmapHex " . PHP_EOL;
+        echo "bitmap bin: $bitmap " . PHP_EOL;
 
-			if (substr($tmp, 0, 1) !== "1" || strlen($bitmap) > 128) {
-				break;
-			}
-		}
+        $this->shrink($message, 16);
 
 		$this->bitmap = $bitmap;
 
@@ -148,24 +161,42 @@ class Message
 			if ($bitmap[$i] === "1") {
 				$fieldNumber = $i + 1;
 
-				if ($fieldNumber === 1 || $fieldNumber === 65) {
-					continue;
-				}
+//				echo "FIELD: " . $fieldNumber . PHP_EOL;
 
-				$fieldData = $this->protocol->getFieldData($fieldNumber);
-				$fieldMapper = $fieldData['type'];
+                if ($fieldNumber === 1 || $fieldNumber === 65) {
+                    continue;
+                }
 
-				if (!isset($this->mappers[$fieldMapper])) {
-					throw new \Exception('Unknown field mapper for "' . $fieldMapper . '" type');
-				}
+                $fieldData = $this->protocol->getFieldData($fieldNumber);
+                $fieldMapper = $fieldData['type'];
 
-				$mapper = new $this->mappers[$fieldMapper]($fieldData['length']);
-				$unpacked = $mapper->unpack($message);
+                if (!isset($this->mappers[$fieldMapper])) {
+                    throw new \Exception('Unknown field mapper for "' . $fieldMapper . '" type');
+                }
+
+//                echo $message . PHP_EOL;
+
+                $mapper = new $this->mappers[$fieldMapper]($fieldData['length']);
+
+                $ascii = false;
+                if ($fieldNumber === 44) {
+                    $ascii = true;
+                }
+				$unpacked = $mapper->unpack($message, $fieldData['type'], $ascii);
+
+                echo "We have field " . $fieldNumber . ': "' . $unpacked . '" ' . json_encode($fieldData) . PHP_EOL;
+
+
+//				echo '$message->setField(' . $fieldNumber . ',"' . $unpacked . '");' . PHP_EOL;
+				//echo $unpacked . PHP_EOL . PHP_EOL;
 
 				$this->setField($fieldNumber, $unpacked);
 			}
 		}
-	}
+		echo "remaining message: " . $message . PHP_EOL;
+        echo "remaining message: " . $this->ebcdicToAscii($message) . PHP_EOL;
+
+    }
 
 	public function getMTI()
 	{
@@ -215,4 +246,129 @@ class Message
 	{
 		return $this->bitmap;
 	}
+
+    const EBCDIC_TO_ASCII = [
+        "40" => " ",
+        "4A" => "¢",
+        "4B" => ".",
+        "4C" => "<",
+        "4D" => "(",
+        "4E" => "+",
+        "4F" => "|",
+        "5A" => "!",
+        "5B" => "$",
+        "5C" => "*",
+        "5D" => ")",
+        "5E" => ",",
+        "5F" => "¬",
+        "60" => "-",
+        "61" => "/",
+        "6A" => "¦",
+        "6B" => ",",
+        "6C" => "%",
+        "6D" => "_",
+        "6E" => ">",
+        "6F" => "?",
+        "79" => "`",
+        "7A" => ":",
+        "7B" => "#",
+        "7C" => "@",
+        "7D" => "'",
+        "7E" => "=",
+        "7F" => " '' ",
+        "81" => "a",
+        "82" => "b",
+        "83" => "c",
+        "84" => "d",
+        "85" => "e",
+        "86" => "f",
+        "87" => "g",
+        "88" => "h",
+        "89" => "i",
+        "91" => "j",
+        "92" => "k",
+        "93" => "l",
+        "94" => "m",
+        "95" => "n",
+        "96" => "o",
+        "97" => "p",
+        "98" => "q",
+        "99" => "r",
+        "A1" => "~",
+        "A2" => "s",
+        "A3" => "t",
+        "A4" => "u",
+        "A5" => "v",
+        "A6" => "w",
+        "A7" => "x",
+        "A8" => "y",
+        "A9" => "z",
+        "C0" => "{",
+        "C1" => "A",
+        "C2" => "B",
+        "C3" => "C",
+        "C4" => "D",
+        "C5" => "E",
+        "C6" => "F",
+        "C7" => "G",
+        "C7" => "H",
+        "C9" => "I",
+        "D0" => "}",
+        "D1" => "J",
+        "D2" => "K",
+        "D3" => "L",
+        "D4" => "M",
+        "D5" => "N",
+        "D6" => "O",
+        "D7" => "P",
+        "D8" => "Q",
+        "D9" => "R",
+        "E0" => "\\",
+        "E2" => "S",
+        "E3" => "T",
+        "E4" => "U",
+        "E5" => "V",
+        "E6" => "W",
+        "E7" => "X",
+        "E8" => "Y",
+        "E9" => "Z",
+        "F0" => "0",
+        "F1" => "1",
+        "F2" => "2",
+        "F3" => "3",
+        "F4" => "4",
+        "F5" => "5",
+        "F6" => "6",
+        "F7" => "7",
+        "F8" => "8",
+        "F9" => "9",
+        "FF" => "E0"
+    ];
+
+    private function asciiToEbcdic($str) {
+        $arr = str_split($str);
+        $encoded = "";
+        $asciiToEbcdic = array_flip(self::EBCDIC_TO_ASCII);
+        foreach ($arr as $char) {
+            $encoded .= $asciiToEbcdic[$char];
+        }
+
+        return $encoded;
+    }
+
+    private function ebcdicToAscii($str) {
+        $arr = str_split($str, 2);
+        $encoded = "";
+        foreach ($arr as $char) {
+            if (isset(self::EBCDIC_TO_ASCII[strtoupper($char)])) {
+                $encoded .= self::EBCDIC_TO_ASCII[strtoupper($char)];
+            } else {
+                $encoded .= '.';
+            }
+        }
+
+        return $encoded;
+    }
+
 }
+
